@@ -1,4 +1,6 @@
-# Dungeon Crawler Mapper
+![Stern's Dungeons & Dragons - The Tyrant's Eye](https://www.pinballnews.com/site/wp-content/uploads/games/dungeons-and-dragons/300-dungeons-and-dragons.jpg)
+
+# Dungeon Crawl Mapper
 
 A simple web application to help map the maze during dungeon crawl in [Stern's Dungeons & Dragons - The Tyrant's Eye](https://sternpinball.com/game/dungeons-dragons/) pinball game.
 
@@ -10,6 +12,13 @@ A simple web application to help map the maze during dungeon crawl in [Stern's D
 * Use B to mark a battle.
 * Use G to mark a treasure.
 * Use SPACE for stairway down to the next level.
+* Use DEL to clear the map.
+
+
+## Known Issues
+
+1. Missing Extra Ball node
+1. When revisiting a node, it doesn't always show the currently active node.
 
 ## License
 
