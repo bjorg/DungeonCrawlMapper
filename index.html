@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stern D&D Mapper</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { background-color: #030712; color: white; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Icons (Inline SVGs to avoid build tools) ---
+        const IconWrapper = ({ children, className, size = 24 }) => (
+            <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width={size} 
+                height={size} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                className={className}
+            >
+                {children}
+            </svg>
+        );
+
+        const ArrowUp = (props) => <IconWrapper {...props}><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></IconWrapper>;
+        const ArrowLeft = (props) => <IconWrapper {...props}><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></IconWrapper>;
+        const ArrowRight = (props) => <IconWrapper {...props}><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></IconWrapper>;
+        const AlertTriangle = (props) => <IconWrapper {...props}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></IconWrapper>;
+        const Skull = (props) => <IconWrapper {...props}><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v2h8v-2"/><path d="m12.5 17-.5-1-.5 1h1z"/><path d="M16 20a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20"/></IconWrapper>;
+        const Coins = (props) => <IconWrapper {...props}><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></IconWrapper>;
+        const ChevronsUp = (props) => <IconWrapper {...props}><path d="m17 11-5-5-5 5"/><path d="m17 18-5-5-5 5"/></IconWrapper>;
+        const Sword = (props) => <IconWrapper {...props}><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" x2="19" y1="19" y2="13"/><line x1="16" x2="20" y1="16" y2="20"/><line x1="19" x2="21" y1="21" y2="19"/></IconWrapper>;
+
+
+        // --- Initial Data Structure ---
+        const INITIAL_DATA = Array(5).fill(null).map((_, i) => ({
+            level: i + 1,
+            nodes: {
+                'root': { id: 'root', type: 'intersection', exits: [], parent: null, x: 0, y: 0 }
+            }
+        }));
+
+        function DungeonMapper() {
+            const [maps, setMaps] = useState(INITIAL_DATA);
+            const [currentLevel, setCurrentLevel] = useState(1);
+            const [cursor, setCursor] = useState({ nodeId: 'root', previousNodeId: null, directionFromPrev: null });
+            const [mode, setMode] = useState('IDLE'); // IDLE, DEFINING, TRANSIT
+            const [draftExits, setDraftExits] = useState([]); 
+            const [message, setMessage] = useState("Press 1-5 to select a Level.");
+
+            // --- Persist ---
+            useEffect(() => {
+                const saved = localStorage.getItem('stern_dnd_map_v2');
+                if (saved) {
+                try { setMaps(JSON.parse(saved)); } catch (e) { console.error(e); }
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('stern_dnd_map_v2', JSON.stringify(maps));
+            }, [maps]);
+
+            // Helper: Get node from the CURRENT active level
+            const getNode = (id) => maps[currentLevel - 1].nodes[id];
+            
+            const startLevel = (lvl) => {
+                setCurrentLevel(lvl);
+                setCursor({ nodeId: 'root', previousNodeId: null, directionFromPrev: null });
+                
+                const lvlMap = maps[lvl - 1];
+                const rootNode = lvlMap.nodes['root'];
+
+                if (rootNode.exits.length === 0) {
+                    setMode('DEFINING');
+                    setDraftExits([]);
+                    setMessage(`Level ${lvl}: Define entry paths (A/S/D) -> ENTER.`);
+                } else {
+                    setMode('IDLE');
+                    setMessage(`Level ${lvl}: Ready. Use A/S/D to move.`);
+                }
+            };
+
+            // --- Keyboard Handler ---
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                const key = e.key.toUpperCase();
+                
+                // Level Selection
+                if (['1', '2', '3', '4', '5'].includes(key)) {
+                    startLevel(parseInt(key));
+                    return;
+                }
+
+                if (mode === 'DEFINING') handleDefiningInput(key);
+                else if (mode === 'IDLE') handleIdleInput(key, e.code);
+                else if (mode === 'TRANSIT') handleTransitInput(key, e.code);
+                };
+
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [mode, currentLevel, cursor, draftExits, maps]);
+
+            // --- Logic Handlers ---
+
+            const handleDefiningInput = (key) => {
+                const mapping = { 'A': 'left', 'S': 'center', 'D': 'right' };
+                if (mapping[key]) {
+                const dir = mapping[key];
+                setDraftExits(prev => prev.includes(dir) ? prev.filter(d => d !== dir) : [...prev, dir]);
+                } else if (key === 'ENTER') {
+                if (draftExits.length === 0) {
+                    setMessage("Select at least one path (A/S/D).");
+                    return;
+                }
+                const newMaps = [...maps];
+                const node = newMaps[currentLevel - 1].nodes[cursor.nodeId];
+                node.exits = draftExits.map(d => ({ dir: d, targetId: null }));
+                setMaps(newMaps);
+                setMode('IDLE');
+                setMessage("Mapped. Choose a direction.");
+                }
+            };
+
+            const handleIdleInput = (key, code) => {
+                const node = getNode(cursor.nodeId);
+                
+                // 1. Handle Battle Logic
+                if (node.type === 'enemy') {
+                    // Check if exits are defined. If so, it's already cleared.
+                    const isCleared = node.exits.length > 0;
+
+                    if (!isCleared) {
+                        if (key === 'ENTER' || code === 'Space') {
+                                // WIN: Switch this SAME node to defining mode.
+                                setMode('DEFINING');
+                                setDraftExits([]);
+                                setMessage("Enemy Defeated. Define new paths (A/S/D).");
+                                return;
+                        } else {
+                            setMessage("Enemy! Defeat & Press ENTER.");
+                            return;
+                        }
+                    }
+                }
+
+                // 2. Handle Movement
+                const mapping = { 'A': 'left', 'S': 'center', 'D': 'right' };
+                const dir = mapping[key];
+                
+                if (!dir) return;
+
+                const exit = node.exits.find(e => e.dir === dir);
+                if (!exit) {
+                    setMessage(`Cannot go ${dir} here.`);
+                    return;
+                }
+
+                if (exit.targetId) {
+                    // Path is known
+                    const targetNode = getNode(exit.targetId);
+                    moveToNode(exit.targetId, dir, targetNode);
+                } else {
+                    // Path is defined but unexplored
+                    setCursor({ nodeId: null, previousNodeId: cursor.nodeId, directionFromPrev: dir });
+                    setMode('TRANSIT');
+                    setMessage(`Moving ${dir}... What did you find? (ASD/X/B/G/Space)`);
+                }
+            };
+
+            const moveToNode = (targetId, dirFromPrev, targetNode) => {
+                setCursor({ nodeId: targetId, previousNodeId: cursor.nodeId, directionFromPrev: dirFromPrev });
+                
+                if (targetNode.type === 'intersection' && targetNode.exits.length === 0) {
+                    setMode('DEFINING');
+                    setDraftExits([]);
+                    setMessage("New Intersection. Define paths.");
+                } else if (targetNode.type === 'enemy') {
+                    const isCleared = targetNode.exits.length > 0;
+                    setMode('IDLE'); 
+                    setMessage(isCleared ? "At Defeated Enemy." : "Battle! Press ENTER when won.");
+                } else {
+                    setMode('IDLE');
+                    setMessage(`At ${targetNode.type}.`);
+                }
+            }
+
+            const handleTransitInput = (key, code) => {
+                let newNodeType = null;
+                let nextMode = 'IDLE';
+                let content = '';
+                let connectionDir = cursor.directionFromPrev; 
+                
+                if (key === 'X') newNodeType = 'trap';
+                else if (key === 'B') newNodeType = 'enemy';
+                else if (key === 'G') newNodeType = 'treasure';
+                else if (code === 'Space') { newNodeType = 'stairs'; content = (currentLevel + 1).toString(); }
+                else if (['A', 'S', 'D'].includes(key)) {
+                    newNodeType = 'intersection';
+                    nextMode = 'DEFINING';
+                }
+
+                if (!newNodeType) return;
+
+                const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const newMaps = [...maps];
+                const activeMap = newMaps[currentLevel - 1];
+                
+                // Create Node
+                activeMap.nodes[newId] = {
+                    id: newId,
+                    type: newNodeType,
+                    exits: [],
+                    content: content,
+                    parent: cursor.previousNodeId
+                };
+
+                // Link Parent
+                const parentNode = activeMap.nodes[cursor.previousNodeId];
+                const exitIndex = parentNode.exits.findIndex(e => e.dir === connectionDir);
+                if (exitIndex >= 0) {
+                    parentNode.exits[exitIndex].targetId = newId;
+                }
+
+                setMaps(newMaps);
+                setCursor({ nodeId: newId, previousNodeId: cursor.previousNodeId, directionFromPrev: connectionDir });
+                setMode(nextMode);
+                
+                if (newNodeType === 'enemy') setMessage("Enemy! Defeat & Press ENTER.");
+                else if (nextMode === 'DEFINING') {
+                    setDraftExits([]);
+                    setMessage("New Intersection. Define paths.");
+                } else {
+                    setMessage(`Found ${newNodeType}.`);
+                }
+            };
+
+            // --- Layout & Rendering ---
+            const computeLayout = (levelIndex) => {
+                const activeMap = maps[levelIndex];
+                const nodes = activeMap.nodes;
+                const rootId = 'root';
+                
+                const getChildren = (id) => {
+                    const n = nodes[id];
+                    if (!n) return [];
+                    const validExits = n.exits.filter(e => e.targetId);
+                    const order = { 'left': -1, 'center': 0, 'right': 1 };
+                    return validExits.sort((a,b) => order[a.dir] - order[b.dir]);
+                };
+
+                const NODE_WIDTH = 60; 
+                const subtreeWidths = {};
+
+                const computeWidth = (id) => {
+                    const children = getChildren(id);
+                    if (children.length === 0) {
+                        subtreeWidths[id] = NODE_WIDTH;
+                        return NODE_WIDTH;
+                    }
+                    let width = 0;
+                    children.forEach(c => width += computeWidth(c.targetId));
+                    subtreeWidths[id] = width;
+                    return width;
+                };
+                
+                computeWidth(rootId);
+
+                const coords = {};
+                const Y_SPACING = 80; 
+
+                const assignPos = (id, x, y) => {
+                    coords[id] = { x, y };
+                    const children = getChildren(id);
+                    if (children.length === 0) return;
+                    
+                    let currentX = x - (subtreeWidths[id] / 2);
+                    children.forEach(child => {
+                        const childW = subtreeWidths[child.targetId];
+                        const childCenterX = currentX + (childW / 2);
+                        assignPos(child.targetId, childCenterX, y - Y_SPACING); 
+                        currentX += childW;
+                    });
+                };
+
+                assignPos(rootId, 0, 0);
+
+                const renderNodes = Object.keys(coords).map(id => ({ ...nodes[id], ...coords[id] }));
+                
+                const renderEdges = [];
+                renderNodes.forEach(node => {
+                    node.exits.forEach(exit => {
+                        if (exit.targetId && coords[exit.targetId]) {
+                            renderEdges.push({
+                                x1: node.x, y1: node.y - 25, 
+                                x2: coords[exit.targetId].x, y2: coords[exit.targetId].y + 25,
+                                dir: exit.dir
+                            });
+                        } else if (!exit.targetId) {
+                            const order = { 'left': -15, 'center': 0, 'right': 15 };
+                            renderEdges.push({
+                                x1: node.x, y1: node.y - 25,
+                                x2: node.x + (order[exit.dir] || 0), y2: node.y - 40,
+                                dir: exit.dir, isStub: true
+                            });
+                        }
+                    });
+                });
+
+                return { renderNodes, renderEdges };
+            };
+
+            const getIcon = (type) => {
+                switch(type) {
+                    case 'intersection': return <ChevronsUp size={20} className="text-blue-400" />;
+                    case 'trap': return <AlertTriangle size={18} className="text-red-500" />;
+                    case 'enemy': return <Skull size={18} className="text-orange-500" />;
+                    case 'treasure': return <Coins size={18} className="text-yellow-400" />;
+                    case 'stairs': return <ArrowUp size={18} className="text-purple-400" />;
+                    default: return null;
+                }
+            };
+
+            return (
+                <div className="flex flex-col h-screen bg-gray-950 text-gray-200 font-mono overflow-hidden">
+                
+                {/* Header */}
+                <div className="px-4 py-3 bg-gray-900 border-b border-gray-800 flex justify-between items-center z-10 shadow-lg">
+                    <h1 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Sword size={20} /> Dungeon Crawl Mapper
+                    </h1>
+                    <div className="text-sm font-bold text-blue-300">
+                        {message}
+                    </div>
+                    <div className="flex gap-1">
+                        {[1, 2, 3, 4, 5].map(lvl => (
+                        <button key={lvl} onClick={() => startLevel(lvl)} 
+                            className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-all ${currentLevel === lvl ? 'bg-blue-600 text-white shadow-blue-500/50 shadow-md' : 'bg-gray-800 text-gray-500 hover:bg-gray-700'}`}>
+                            {lvl}
+                        </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Main Split View */}
+                <div className="flex flex-1 overflow-hidden">
+                    {maps.map((mapData, index) => {
+                    const isLevelActive = currentLevel === (index + 1);
+                    const { renderNodes, renderEdges } = computeLayout(index);
+
+                    return (
+                        <div 
+                            key={index} 
+                            className={`flex-1 relative border-r border-gray-800 transition-colors duration-500 
+                            ${isLevelActive ? 'bg-gray-900/50' : 'bg-black/60 opacity-60 grayscale-[50%]'}`}
+                        >
+                        <div className="absolute bottom-4 right-4 text-8xl font-black text-gray-800/50 pointer-events-none select-none">
+                            {index + 1}
+                        </div>
+
+                        <div className="w-full h-full relative overflow-hidden">
+                            <div className="absolute bottom-[50px] left-1/2 transform -translate-x-1/2 w-0 h-0">
+                                
+                                <svg className="absolute overflow-visible" style={{ left: 0, top: 0 }}>
+                                    {renderEdges.map((edge, i) => (
+                                        <g key={i}>
+                                        <line 
+                                            x1={edge.x1} y1={edge.y1} 
+                                            x2={edge.x2} y2={edge.y2} 
+                                            stroke={edge.isStub ? "#4b5563" : "#60a5fa"} 
+                                            strokeWidth={edge.isStub ? 1 : 2} 
+                                            strokeDasharray={edge.isStub ? "3" : "0"}
+                                        />
+                                        {!edge.isStub && <circle cx={edge.x2} cy={edge.y2} r="2" fill="#60a5fa" />}
+                                        </g>
+                                    ))}
+                                </svg>
+
+                                {renderNodes.map(node => {
+                                    const isCursor = isLevelActive && cursor.nodeId === node.id;
+                                    return (
+                                        <div 
+                                            key={node.id}
+                                            className={`absolute w-[50px] h-[50px] border-2 flex flex-col items-center justify-center rounded shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300
+                                                ${isCursor ? 'ring-2 ring-green-400 bg-gray-800 scale-110 z-20' : 'bg-gray-900 border-gray-700 z-10'}
+                                                ${node.type === 'trap' ? 'border-red-900/50' : ''}
+                                                ${node.type === 'enemy' ? 'border-orange-900/50' : ''}
+                                                ${node.type === 'treasure' ? 'border-yellow-900/50' : ''}
+                                            `}
+                                            style={{ left: node.x, top: node.y }}
+                                        >
+                                            {node.id === 'root' ? (
+                                                <span className="text-2xl font-bold text-gray-500">{index + 1}</span>
+                                            ) : (
+                                                <>
+                                                    {getIcon(node.type)}
+                                                    {node.type === 'stairs' && <span className="text-[10px] font-bold text-white mt-0.5">L{node.content}</span>}
+                                                </>
+                                            )}
+
+                                            {isCursor && mode === 'DEFINING' && (
+                                                <div className="absolute inset-0 pointer-events-none">
+                                                    {draftExits.includes('left') && <ArrowLeft className="absolute top-1/2 -left-5 text-green-500 animate-pulse" size={16}/>}
+                                                    {draftExits.includes('right') && <ArrowRight className="absolute top-1/2 -right-5 text-green-500 animate-pulse" size={16}/>}
+                                                    {draftExits.includes('center') && <ArrowUp className="absolute -top-5 left-1/2 -translate-x-1/2 text-green-500 animate-pulse" size={16}/>}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        </div>
+                    );
+                    })}
+                </div>
+
+                {/* Footer Legend */}
+                <div className="px-4 py-2 bg-gray-900 border-t border-gray-800 text-[10px] text-gray-400 flex justify-center gap-6">
+                    <span className="flex items-center gap-1"><ChevronsUp size={12} className="text-blue-400"/> Intersection</span>
+                    <span className="flex items-center gap-1"><Skull size={12} className="text-orange-500"/> Enemy (Passable)</span>
+                    <span className="flex items-center gap-1"><AlertTriangle size={12} className="text-red-500"/> Trap</span>
+                    <span className="flex items-center gap-1"><Coins size={12} className="text-yellow-400"/> Treasure</span>
+                    <span className="flex items-center gap-1 text-green-400 font-bold">ENTER = Confirm</span>
+                </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<DungeonMapper />);
+    </script>
+</body>
+</html>
