@@ -147,7 +147,6 @@
                 
                 // 1. Handle Battle Logic
                 if (node.type === 'enemy') {
-                    // Check if exits are defined. If so, it's already cleared.
                     const isCleared = node.exits.length > 0;
 
                     if (!isCleared) {
@@ -261,25 +260,34 @@
                 const nodes = activeMap.nodes;
                 const rootId = 'root';
                 
-                const getChildren = (id) => {
+                // UPDATED: Include ALL exits (even null targets/stubs) in the layout structure
+                const getAllChildren = (id) => {
                     const n = nodes[id];
                     if (!n) return [];
-                    const validExits = n.exits.filter(e => e.targetId);
-                    const order = { 'left': -1, 'center': 0, 'right': 1 };
-                    return validExits.sort((a,b) => order[a.dir] - order[b.dir]);
+                    // We return both realized nodes and stubs as 'children' to space them out
+                    const order = { 'left': -1, 'center': 0, 'right': 1, 'next': 0 };
+                    return [...n.exits].sort((a,b) => order[a.dir] - order[b.dir]);
                 };
 
                 const NODE_WIDTH = 60; 
                 const subtreeWidths = {};
 
                 const computeWidth = (id) => {
-                    const children = getChildren(id);
+                    const children = getAllChildren(id);
                     if (children.length === 0) {
                         subtreeWidths[id] = NODE_WIDTH;
                         return NODE_WIDTH;
                     }
+                    
                     let width = 0;
-                    children.forEach(c => width += computeWidth(c.targetId));
+                    children.forEach(c => {
+                        if (c.targetId) {
+                            width += computeWidth(c.targetId);
+                        } else {
+                            // It's a stub, give it standard width so it doesn't overlap neighbors
+                            width += NODE_WIDTH;
+                        }
+                    });
                     subtreeWidths[id] = width;
                     return width;
                 };
@@ -287,28 +295,50 @@
                 computeWidth(rootId);
 
                 const coords = {};
+                const stubCoords = {}; // Store coords for question marks
                 const Y_SPACING = 80; 
 
                 const assignPos = (id, x, y) => {
                     coords[id] = { x, y };
-                    const children = getChildren(id);
+                    const children = getAllChildren(id);
                     if (children.length === 0) return;
                     
                     let currentX = x - (subtreeWidths[id] / 2);
+                    
                     children.forEach(child => {
-                        const childW = subtreeWidths[child.targetId];
+                        // Determine the width of this specific child (node or stub)
+                        let childW = NODE_WIDTH; 
+                        if (child.targetId) {
+                            childW = subtreeWidths[child.targetId];
+                        }
+
+                        // Place it in the center of its allocated width
                         const childCenterX = currentX + (childW / 2);
-                        assignPos(child.targetId, childCenterX, y - Y_SPACING); 
+                        
+                        if (child.targetId) {
+                            assignPos(child.targetId, childCenterX, y - Y_SPACING);
+                        } else {
+                            // It's a stub, just store its position
+                            stubCoords[`stub_${id}_${child.dir}`] = {
+                                x: childCenterX,
+                                y: y - Y_SPACING,
+                                parentId: id,
+                                dir: child.dir
+                            };
+                        }
+
                         currentX += childW;
                     });
                 };
 
                 assignPos(rootId, 0, 0);
 
+                // Generate Render Objects
                 const renderNodes = Object.keys(coords).map(id => ({ ...nodes[id], ...coords[id] }));
                 const renderEdges = [];
-                const stubNodes = []; // Store question mark nodes here
+                const renderStubs = [];
 
+                // Add Real Nodes Edges
                 renderNodes.forEach(node => {
                     node.exits.forEach(exit => {
                         if (exit.targetId && coords[exit.targetId]) {
@@ -317,30 +347,32 @@
                                 x2: coords[exit.targetId].x, y2: coords[exit.targetId].y + 25,
                                 dir: exit.dir
                             });
-                        } else if (!exit.targetId) {
-                            // Draw edge to a new question mark box
-                            const order = { 'left': -35, 'center': 0, 'right': 35 };
-                            const stubX = node.x + (order[exit.dir] || 0);
-                            const stubY = node.y - 60;
-
-                            renderEdges.push({
-                                x1: node.x, y1: node.y - 25,
-                                x2: stubX, y2: stubY + 20, // Connect to bottom of stub box
-                                dir: exit.dir, isStub: true
-                            });
-                            
-                            stubNodes.push({
-                                id: `stub_${node.id}_${exit.dir}`,
-                                type: 'unknown',
-                                x: stubX,
-                                y: stubY,
-                            });
                         }
                     });
                 });
 
-                // Combine real nodes and unknown nodes
-                return { renderNodes: [...renderNodes, ...stubNodes], renderEdges };
+                // Add Stub Nodes & Edges
+                Object.keys(stubCoords).forEach(key => {
+                    const stub = stubCoords[key];
+                    const parent = coords[stub.parentId]; // Get parent XY
+                    
+                    if (parent) {
+                         renderEdges.push({
+                            x1: parent.x, y1: parent.y - 25,
+                            x2: stub.x, y2: stub.y + 20, // Connect to bottom of stub
+                            dir: stub.dir, isStub: true
+                        });
+                        
+                        renderStubs.push({
+                            id: key,
+                            type: 'unknown',
+                            x: stub.x,
+                            y: stub.y
+                        });
+                    }
+                });
+
+                return { renderNodes: [...renderNodes, ...renderStubs], renderEdges };
             };
 
             const getIcon = (type) => {
