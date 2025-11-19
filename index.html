@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stern D&D Mapper</title>
+    <title>Dungeon Crawl Mapper</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -306,8 +306,9 @@
                 assignPos(rootId, 0, 0);
 
                 const renderNodes = Object.keys(coords).map(id => ({ ...nodes[id], ...coords[id] }));
-                
                 const renderEdges = [];
+                const stubNodes = []; // Store question mark nodes here
+
                 renderNodes.forEach(node => {
                     node.exits.forEach(exit => {
                         if (exit.targetId && coords[exit.targetId]) {
@@ -317,17 +318,29 @@
                                 dir: exit.dir
                             });
                         } else if (!exit.targetId) {
-                            const order = { 'left': -15, 'center': 0, 'right': 15 };
+                            // Draw edge to a new question mark box
+                            const order = { 'left': -35, 'center': 0, 'right': 35 };
+                            const stubX = node.x + (order[exit.dir] || 0);
+                            const stubY = node.y - 60;
+
                             renderEdges.push({
                                 x1: node.x, y1: node.y - 25,
-                                x2: node.x + (order[exit.dir] || 0), y2: node.y - 40,
+                                x2: stubX, y2: stubY + 20, // Connect to bottom of stub box
                                 dir: exit.dir, isStub: true
+                            });
+                            
+                            stubNodes.push({
+                                id: `stub_${node.id}_${exit.dir}`,
+                                type: 'unknown',
+                                x: stubX,
+                                y: stubY,
                             });
                         }
                     });
                 });
 
-                return { renderNodes, renderEdges };
+                // Combine real nodes and unknown nodes
+                return { renderNodes: [...renderNodes, ...stubNodes], renderEdges };
             };
 
             const getIcon = (type) => {
@@ -337,6 +350,7 @@
                     case 'enemy': return <Skull size={18} className="text-orange-500" />;
                     case 'treasure': return <Coins size={18} className="text-yellow-400" />;
                     case 'stairs': return <ArrowUp size={18} className="text-purple-400" />;
+                    case 'unknown': return <span className="text-gray-500 font-bold text-lg">?</span>;
                     default: return null;
                 }
             };
@@ -398,11 +412,14 @@
 
                                 {renderNodes.map(node => {
                                     const isCursor = isLevelActive && cursor.nodeId === node.id;
+                                    const isUnknown = node.type === 'unknown';
+                                    
                                     return (
                                         <div 
                                             key={node.id}
-                                            className={`absolute w-[50px] h-[50px] border-2 flex flex-col items-center justify-center rounded shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300
-                                                ${isCursor ? 'ring-2 ring-green-400 bg-gray-800 scale-110 z-20' : 'bg-gray-900 border-gray-700 z-10'}
+                                            className={`absolute border-2 flex flex-col items-center justify-center rounded shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300
+                                                ${isUnknown ? 'w-[40px] h-[40px] border-dashed border-gray-700 bg-black/40 z-0' : 'w-[50px] h-[50px] z-10'}
+                                                ${isCursor ? 'ring-2 ring-green-400 bg-gray-800 scale-110 z-20' : (!isUnknown ? 'bg-gray-900 border-gray-700' : '')}
                                                 ${node.type === 'trap' ? 'border-red-900/50' : ''}
                                                 ${node.type === 'enemy' ? 'border-orange-900/50' : ''}
                                                 ${node.type === 'treasure' ? 'border-yellow-900/50' : ''}
