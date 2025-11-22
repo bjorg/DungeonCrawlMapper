@@ -25,7 +25,7 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // --- Icons (Inline SVGs to avoid build tools) ---
+        // --- Icons ---
         const IconWrapper = ({ children, className, size = 24 }) => (
             <svg 
                 xmlns="http://www.w3.org/2000/svg" 
@@ -49,12 +49,12 @@
         const AlertTriangle = (props) => <IconWrapper {...props}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></IconWrapper>;
         const Skull = (props) => <IconWrapper {...props}><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v2h8v-2"/><path d="m12.5 17-.5-1-.5 1h1z"/><path d="M16 20a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20"/></IconWrapper>;
         const Coins = (props) => <IconWrapper {...props}><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></IconWrapper>;
+        const Circle = (props) => <IconWrapper {...props}><circle cx="12" cy="12" r="10"/></IconWrapper>;
         const ChevronsUp = (props) => <IconWrapper {...props}><path d="m17 11-5-5-5 5"/><path d="m17 18-5-5-5 5"/></IconWrapper>;
         const Sword = (props) => <IconWrapper {...props}><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" x2="19" y1="19" y2="13"/><line x1="16" x2="20" y1="16" y2="20"/><line x1="19" x2="21" y1="21" y2="19"/></IconWrapper>;
 
 
-        // --- Initial Data Structure Generator ---
-        // Changed to a function so we can generate fresh objects on reset
+        // --- Initial Data Generator ---
         const getInitialData = () => Array(5).fill(null).map((_, i) => ({
             level: i + 1,
             nodes: {
@@ -72,17 +72,16 @@
 
             // --- Persist ---
             useEffect(() => {
-                const saved = localStorage.getItem('stern_dnd_map_v2');
+                const saved = localStorage.getItem('stern_dnd_map_v3');
                 if (saved) {
-                try { setMaps(JSON.parse(saved)); } catch (e) { console.error(e); }
+                   try { setMaps(JSON.parse(saved)); } catch (e) { console.error(e); }
                 }
             }, []);
 
             useEffect(() => {
-                localStorage.setItem('stern_dnd_map_v2', JSON.stringify(maps));
+                localStorage.setItem('stern_dnd_map_v3', JSON.stringify(maps));
             }, [maps]);
 
-            // Helper: Get node from the CURRENT active level
             const getNode = (id) => maps[currentLevel - 1].nodes[id];
             
             const startLevel = (lvl) => {
@@ -107,19 +106,17 @@
                 const handleKeyDown = (e) => {
                 const key = e.key.toUpperCase();
                 
-                // RESET Logic
+                // RESET
                 if (key === 'DELETE') {
-                    if (window.confirm("⚠️ Reset Map?\n\nThis will delete all progress on ALL levels. This cannot be undone.")) {
+                    if (window.confirm("⚠️ Reset Map?\n\nThis will delete all progress on ALL levels.")) {
                         const freshData = getInitialData();
                         setMaps(freshData);
                         setCurrentLevel(1);
                         setCursor({ nodeId: 'root', previousNodeId: null, directionFromPrev: null });
-                        setMode('DEFINING'); // Root is new, so we must be defining
+                        setMode('DEFINING'); 
                         setDraftExits([]);
                         setMessage("Map Reset. Level 1 Started. Define entry paths.");
-                        
-                        // Force clear storage immediately to prevent race conditions
-                        localStorage.removeItem('stern_dnd_map_v2');
+                        localStorage.removeItem('stern_dnd_map_v3');
                     }
                     return;
                 }
@@ -144,35 +141,39 @@
             const handleDefiningInput = (key) => {
                 const mapping = { 'A': 'left', 'S': 'center', 'D': 'right' };
                 if (mapping[key]) {
-                const dir = mapping[key];
-                setDraftExits(prev => prev.includes(dir) ? prev.filter(d => d !== dir) : [...prev, dir]);
+                    const dir = mapping[key];
+                    setDraftExits(prev => prev.includes(dir) ? prev.filter(d => d !== dir) : [...prev, dir]);
                 } else if (key === 'ENTER') {
-                if (draftExits.length === 0) {
-                    setMessage("Select at least one path (A/S/D).");
-                    return;
-                }
-                const newMaps = [...maps];
-                const node = newMaps[currentLevel - 1].nodes[cursor.nodeId];
-                node.exits = draftExits.map(d => ({ dir: d, targetId: null }));
-                setMaps(newMaps);
-                setMode('IDLE');
-                setMessage("Mapped. Choose a direction.");
+                    if (draftExits.length === 0) {
+                        setMessage("Select at least one path (A/S/D).");
+                        return;
+                    }
+                    const newMaps = [...maps];
+                    const node = newMaps[currentLevel - 1].nodes[cursor.nodeId];
+                    node.exits = draftExits.map(d => ({ dir: d, targetId: null }));
+                    setMaps(newMaps);
+                    setMode('IDLE');
+                    setMessage("Mapped. Choose a direction.");
                 }
             };
 
             const handleIdleInput = (key, code) => {
                 const node = getNode(cursor.nodeId);
                 
-                // 1. Handle Battle Logic
                 if (node.type === 'enemy') {
                     const isCleared = node.exits.length > 0;
-
                     if (!isCleared) {
                         if (key === 'ENTER' || code === 'Space') {
-                                // WIN: Switch this SAME node to defining mode.
-                                setMode('DEFINING');
-                                setDraftExits([]);
-                                setMessage("Enemy Defeated. Define new paths (A/S/D).");
+                                // Auto-define Center exit AND move into it immediately
+                                const newMaps = [...maps];
+                                const activeNode = newMaps[currentLevel - 1].nodes[cursor.nodeId];
+                                activeNode.exits = [{ dir: 'center', targetId: null }];
+                                setMaps(newMaps);
+                                
+                                // Move cursor to TRANSIT state immediately
+                                setCursor({ nodeId: null, previousNodeId: cursor.nodeId, directionFromPrev: 'center' });
+                                setMode('TRANSIT');
+                                setMessage("Enemy Defeated. Moving Forward... Found? (X/B/G/E/Space)");
                                 return;
                         } else {
                             setMessage("Enemy! Defeat & Press ENTER.");
@@ -181,10 +182,8 @@
                     }
                 }
 
-                // 2. Handle Movement
                 const mapping = { 'A': 'left', 'S': 'center', 'D': 'right' };
                 const dir = mapping[key];
-                
                 if (!dir) return;
 
                 const exit = node.exits.find(e => e.dir === dir);
@@ -194,14 +193,12 @@
                 }
 
                 if (exit.targetId) {
-                    // Path is known
                     const targetNode = getNode(exit.targetId);
                     moveToNode(exit.targetId, dir, targetNode);
                 } else {
-                    // Path is defined but unexplored
                     setCursor({ nodeId: null, previousNodeId: cursor.nodeId, directionFromPrev: dir });
                     setMode('TRANSIT');
-                    setMessage(`Moving ${dir}... What did you find? (ASD/X/B/G/Space)`);
+                    setMessage(`Moving ${dir}... Found? (X/B/G/E/Space)`);
                 }
             };
 
@@ -231,6 +228,7 @@
                 if (key === 'X') newNodeType = 'trap';
                 else if (key === 'B') newNodeType = 'enemy';
                 else if (key === 'G') newNodeType = 'treasure';
+                else if (key === 'E') newNodeType = 'extra_ball';
                 else if (code === 'Space') { newNodeType = 'stairs'; content = (currentLevel + 1).toString(); }
                 else if (['A', 'S', 'D'].includes(key)) {
                     newNodeType = 'intersection';
@@ -243,7 +241,6 @@
                 const newMaps = [...maps];
                 const activeMap = newMaps[currentLevel - 1];
                 
-                // Create Node
                 activeMap.nodes[newId] = {
                     id: newId,
                     type: newNodeType,
@@ -252,7 +249,6 @@
                     parent: cursor.previousNodeId
                 };
 
-                // Link Parent
                 const parentNode = activeMap.nodes[cursor.previousNodeId];
                 const exitIndex = parentNode.exits.findIndex(e => e.dir === connectionDir);
                 if (exitIndex >= 0) {
@@ -278,11 +274,9 @@
                 const nodes = activeMap.nodes;
                 const rootId = 'root';
                 
-                // UPDATED: Include ALL exits (even null targets/stubs) in the layout structure
                 const getAllChildren = (id) => {
                     const n = nodes[id];
                     if (!n) return [];
-                    // We return both realized nodes and stubs as 'children' to space them out
                     const order = { 'left': -1, 'center': 0, 'right': 1, 'next': 0 };
                     return [...n.exits].sort((a,b) => order[a.dir] - order[b.dir]);
                 };
@@ -296,15 +290,9 @@
                         subtreeWidths[id] = NODE_WIDTH;
                         return NODE_WIDTH;
                     }
-                    
                     let width = 0;
                     children.forEach(c => {
-                        if (c.targetId) {
-                            width += computeWidth(c.targetId);
-                        } else {
-                            // It's a stub, give it standard width so it doesn't overlap neighbors
-                            width += NODE_WIDTH;
-                        }
+                        width += c.targetId ? computeWidth(c.targetId) : NODE_WIDTH;
                     });
                     subtreeWidths[id] = width;
                     return width;
@@ -313,7 +301,7 @@
                 computeWidth(rootId);
 
                 const coords = {};
-                const stubCoords = {}; // Store coords for question marks
+                const stubCoords = {}; 
                 const Y_SPACING = 80; 
 
                 const assignPos = (id, x, y) => {
@@ -324,19 +312,14 @@
                     let currentX = x - (subtreeWidths[id] / 2);
                     
                     children.forEach(child => {
-                        // Determine the width of this specific child (node or stub)
                         let childW = NODE_WIDTH; 
-                        if (child.targetId) {
-                            childW = subtreeWidths[child.targetId];
-                        }
+                        if (child.targetId) childW = subtreeWidths[child.targetId];
 
-                        // Place it in the center of its allocated width
                         const childCenterX = currentX + (childW / 2);
                         
                         if (child.targetId) {
                             assignPos(child.targetId, childCenterX, y - Y_SPACING);
                         } else {
-                            // It's a stub, just store its position
                             stubCoords[`stub_${id}_${child.dir}`] = {
                                 x: childCenterX,
                                 y: y - Y_SPACING,
@@ -344,19 +327,16 @@
                                 dir: child.dir
                             };
                         }
-
                         currentX += childW;
                     });
                 };
 
                 assignPos(rootId, 0, 0);
 
-                // Generate Render Objects
                 const renderNodes = Object.keys(coords).map(id => ({ ...nodes[id], ...coords[id] }));
                 const renderEdges = [];
                 const renderStubs = [];
 
-                // Add Real Nodes Edges
                 renderNodes.forEach(node => {
                     node.exits.forEach(exit => {
                         if (exit.targetId && coords[exit.targetId]) {
@@ -369,23 +349,22 @@
                     });
                 });
 
-                // Add Stub Nodes & Edges
                 Object.keys(stubCoords).forEach(key => {
                     const stub = stubCoords[key];
-                    const parent = coords[stub.parentId]; // Get parent XY
-                    
+                    const parent = coords[stub.parentId];
                     if (parent) {
                          renderEdges.push({
                             x1: parent.x, y1: parent.y - 25,
-                            x2: stub.x, y2: stub.y + 20, // Connect to bottom of stub
+                            x2: stub.x, y2: stub.y + 20,
                             dir: stub.dir, isStub: true
                         });
-                        
                         renderStubs.push({
                             id: key,
                             type: 'unknown',
                             x: stub.x,
-                            y: stub.y
+                            y: stub.y,
+                            parentId: stub.parentId,
+                            dir: stub.dir
                         });
                     }
                 });
@@ -399,6 +378,7 @@
                     case 'trap': return <AlertTriangle size={18} className="text-red-500" />;
                     case 'enemy': return <Skull size={18} className="text-orange-500" />;
                     case 'treasure': return <Coins size={18} className="text-yellow-400" />;
+                    case 'extra_ball': return <Circle size={18} className="text-gray-300 fill-gray-500" />;
                     case 'stairs': return <ArrowUp size={18} className="text-purple-400" />;
                     case 'unknown': return <span className="text-gray-500 font-bold text-lg">?</span>;
                     default: return null;
@@ -432,6 +412,14 @@
                     const isLevelActive = currentLevel === (index + 1);
                     const { renderNodes, renderEdges } = computeLayout(index);
 
+                    // Recursive check for unknown nodes
+                    const hasUnexplored = (nodeId) => {
+                        const n = mapData.nodes[nodeId];
+                        if (!n) return false;
+                        if (n.type === 'enemy' && n.exits.length === 0) return true; // Unbeaten enemy
+                        return n.exits.some(e => !e.targetId || hasUnexplored(e.targetId)); // Null target OR recursive check
+                    };
+
                     return (
                         <div 
                             key={index} 
@@ -462,17 +450,47 @@
 
                                 {renderNodes.map(node => {
                                     const isCursor = isLevelActive && cursor.nodeId === node.id;
-                                    const isUnknown = node.type === 'unknown';
+                                    // If we are in TRANSIT mode (cursor.nodeId is null), highlight the stub we are moving towards
+                                    const isActiveStub = isLevelActive && mode === 'TRANSIT' && node.type === 'unknown' && 
+                                                         node.parentId === cursor.previousNodeId && node.dir === cursor.directionFromPrev;
                                     
+                                    const isUnknown = node.type === 'unknown';
+                                    const activeClass = isCursor || isActiveStub ? 'ring-2 ring-green-400 bg-gray-800 scale-110 z-20' : '';
+                                    
+                                    // --- Determine Arrows Logic ---
+                                    const getExitStatus = (dir) => {
+                                        const exit = node.exits?.find(e => e.dir === dir);
+                                        if (!exit) return null; // No path
+                                        
+                                        // Immediate check: Is it a stub?
+                                        if (!exit.targetId) return 'unexplored';
+                                        
+                                        // Recursive check: Does the branch contain unknowns?
+                                        if (hasUnexplored(exit.targetId)) return 'unexplored';
+                                        
+                                        return 'explored';
+                                    };
+
+                                    const leftStatus = isCursor && mode === 'IDLE' && getExitStatus('left');
+                                    const rightStatus = isCursor && mode === 'IDLE' && getExitStatus('right');
+                                    const centerStatus = isCursor && mode === 'IDLE' && getExitStatus('center');
+
+                                    const getArrowClass = (status) => {
+                                        if (status === 'unexplored') return "text-orange-400 animate-pulse filter drop-shadow-lg";
+                                        return "text-green-600";
+                                    };
+
                                     return (
                                         <div 
                                             key={node.id}
                                             className={`absolute border-2 flex flex-col items-center justify-center rounded shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300
                                                 ${isUnknown ? 'w-[40px] h-[40px] border-dashed border-gray-700 bg-black/40 z-0' : 'w-[50px] h-[50px] z-10'}
-                                                ${isCursor ? 'ring-2 ring-green-400 bg-gray-800 scale-110 z-20' : (!isUnknown ? 'bg-gray-900 border-gray-700' : '')}
+                                                ${activeClass}
+                                                ${!isCursor && !isActiveStub && !isUnknown ? 'bg-gray-900 border-gray-700' : ''}
                                                 ${node.type === 'trap' ? 'border-red-900/50' : ''}
                                                 ${node.type === 'enemy' ? 'border-orange-900/50' : ''}
                                                 ${node.type === 'treasure' ? 'border-yellow-900/50' : ''}
+                                                ${node.type === 'extra_ball' ? 'border-gray-300' : ''}
                                             `}
                                             style={{ left: node.x, top: node.y }}
                                         >
@@ -485,11 +503,21 @@
                                                 </>
                                             )}
 
+                                            {/* Defining Arrows (Pulsing) */}
                                             {isCursor && mode === 'DEFINING' && (
                                                 <div className="absolute inset-0 pointer-events-none">
                                                     {draftExits.includes('left') && <ArrowLeft className="absolute top-1/2 -left-5 text-green-500 animate-pulse" size={16}/>}
                                                     {draftExits.includes('right') && <ArrowRight className="absolute top-1/2 -right-5 text-green-500 animate-pulse" size={16}/>}
                                                     {draftExits.includes('center') && <ArrowUp className="absolute -top-5 left-1/2 -translate-x-1/2 text-green-500 animate-pulse" size={16}/>}
+                                                </div>
+                                            )}
+
+                                            {/* IDLE Choices with Highlight Logic */}
+                                            {isCursor && mode === 'IDLE' && (
+                                                <div className="absolute inset-0 pointer-events-none">
+                                                    {leftStatus && <ArrowLeft className={`absolute top-1/2 -left-6 ${getArrowClass(leftStatus)}`} size={20}/>}
+                                                    {rightStatus && <ArrowRight className={`absolute top-1/2 -right-6 ${getArrowClass(rightStatus)}`} size={20}/>}
+                                                    {centerStatus && <ArrowUp className={`absolute -top-6 left-1/2 -translate-x-1/2 ${getArrowClass(centerStatus)}`} size={20}/>}
                                                 </div>
                                             )}
                                         </div>
@@ -503,13 +531,14 @@
                 </div>
 
                 {/* Footer Legend */}
-                <div className="px-4 py-2 bg-gray-900 border-t border-gray-800 text-[10px] text-gray-400 flex justify-center gap-6">
-                    <span className="flex items-center gap-1"><ChevronsUp size={12} className="text-blue-400"/> Intersection</span>
-                    <span className="flex items-center gap-1"><Skull size={12} className="text-orange-500"/> Enemy (Passable)</span>
-                    <span className="flex items-center gap-1"><AlertTriangle size={12} className="text-red-500"/> Trap</span>
-                    <span className="flex items-center gap-1"><Coins size={12} className="text-yellow-400"/> Treasure</span>
-                    <span className="flex items-center gap-1 text-green-400 font-bold">ENTER = Confirm</span>
-                    <span className="flex items-center gap-1 text-red-400 font-bold">DEL = Reset</span>
+                <div className="px-4 py-2 bg-gray-900 border-t border-gray-800 text-[10px] text-gray-400 flex justify-center gap-4 flex-wrap">
+                    <span className="flex items-center gap-1"><ChevronsUp size={12} className="text-blue-400"/> Intersection (A/S/D)</span>
+                    <span className="flex items-center gap-1"><Skull size={12} className="text-orange-500"/> Enemy (B)</span>
+                    <span className="flex items-center gap-1"><AlertTriangle size={12} className="text-red-500"/> Trap (X)</span>
+                    <span className="flex items-center gap-1"><Coins size={12} className="text-yellow-400"/> Treasure (G)</span>
+                    <span className="flex items-center gap-1"><Circle size={12} className="text-gray-300 fill-gray-500"/> Extra Ball (E)</span>
+                    <span className="flex items-center gap-1 text-green-400 font-bold border-l border-gray-700 pl-2">ENTER=Confirm</span>
+                    <span className="flex items-center gap-1 text-red-400 font-bold">DEL=Reset</span>
                 </div>
                 </div>
             );

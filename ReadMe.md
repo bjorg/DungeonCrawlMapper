@@ -14,12 +14,6 @@ A simple web application to help map the maze during dungeon crawl in [Stern's D
 * Use SPACE for stairway down to the next level.
 * Use DEL to clear the map.
 
-
-## Known Issues
-
-1. Missing Extra Ball node
-1. When revisiting a node, it doesn't always show the currently active node.
-
 ## License
 
 Copyright 2025 - Steve G. Bjorg
