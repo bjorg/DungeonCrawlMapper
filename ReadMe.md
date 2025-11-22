@@ -11,6 +11,7 @@ A simple web application to help map the maze during dungeon crawl in [Stern's D
 * Use X to mark a trap.
 * Use B to mark a battle.
 * Use G to mark a treasure.
+* Use E to mark an extra ball.
 * Use SPACE for stairway down to the next level.
 * Use DEL to clear the map.
 
