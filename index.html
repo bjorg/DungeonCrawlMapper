@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Dungeon Crawl Mapper</title>
     
     <!-- Tailwind CSS -->
@@ -16,14 +16,16 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <style>
-        body { background-color: #030712; color: white; overflow: hidden; }
+        body { background-color: #030712; color: white; overflow: hidden; touch-action: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none;  scrollbar-width: none; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         // --- Icons ---
         const IconWrapper = ({ children, className, size = 24 }) => (
@@ -52,6 +54,7 @@
         const Circle = (props) => <IconWrapper {...props}><circle cx="12" cy="12" r="10"/></IconWrapper>;
         const ChevronsUp = (props) => <IconWrapper {...props}><path d="m17 11-5-5-5 5"/><path d="m17 18-5-5-5 5"/></IconWrapper>;
         const Sword = (props) => <IconWrapper {...props}><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" x2="19" y1="19" y2="13"/><line x1="16" x2="20" y1="16" y2="20"/><line x1="19" x2="21" y1="21" y2="19"/></IconWrapper>;
+        const Check = (props) => <IconWrapper {...props}><polyline points="20 6 9 17 4 12"/></IconWrapper>;
 
 
         // --- Initial Data Generator ---
@@ -66,20 +69,20 @@
             const [maps, setMaps] = useState(getInitialData());
             const [currentLevel, setCurrentLevel] = useState(1);
             const [cursor, setCursor] = useState({ nodeId: 'root', previousNodeId: null, directionFromPrev: null });
-            const [mode, setMode] = useState('IDLE'); // IDLE, DEFINING, TRANSIT
+            const [mode, setMode] = useState('IDLE'); 
             const [draftExits, setDraftExits] = useState([]); 
-            const [message, setMessage] = useState("Press 1-5 to select a Level.");
+            const [message, setMessage] = useState("Select Level to Start");
 
             // --- Persist ---
             useEffect(() => {
-                const saved = localStorage.getItem('stern_dnd_map_v3');
+                const saved = localStorage.getItem('stern_dnd_map_v4');
                 if (saved) {
                    try { setMaps(JSON.parse(saved)); } catch (e) { console.error(e); }
                 }
             }, []);
 
             useEffect(() => {
-                localStorage.setItem('stern_dnd_map_v3', JSON.stringify(maps));
+                localStorage.setItem('stern_dnd_map_v4', JSON.stringify(maps));
             }, [maps]);
 
             const getNode = (id) => maps[currentLevel - 1].nodes[id];
@@ -94,19 +97,58 @@
                 if (rootNode.exits.length === 0) {
                     setMode('DEFINING');
                     setDraftExits([]);
-                    setMessage(`Level ${lvl}: Define entry paths (A/S/D) -> ENTER.`);
+                    setMessage(`Level ${lvl}: Define entry paths`);
                 } else {
                     setMode('IDLE');
-                    setMessage(`Level ${lvl}: Ready. Use A/S/D to move.`);
+                    setMessage(`Level ${lvl}: Ready`);
                 }
             };
 
-            // --- Keyboard Handler ---
-            useEffect(() => {
-                const handleKeyDown = (e) => {
-                const key = e.key.toUpperCase();
+            // --- CLICK NAVIGATION ---
+            const handleNodeClick = (clickedNode, levelIndex) => {
+                const targetLvl = levelIndex + 1;
                 
-                // RESET
+                // If we clicked a stub (visual question mark), jump to its parent
+                if (clickedNode.id.toString().startsWith('stub_')) {
+                    if (targetLvl !== currentLevel) setCurrentLevel(targetLvl);
+                    
+                    // Move to the parent intersection
+                    const parentNode = maps[levelIndex].nodes[clickedNode.parentId];
+                    setCursor({ nodeId: parentNode.id, previousNodeId: parentNode.parent, directionFromPrev: null });
+                    setMode('IDLE');
+                    setMessage("Moved to Intersection.");
+                    return;
+                }
+
+                // Concrete Node Click
+                const node = maps[levelIndex].nodes[clickedNode.id];
+                if (!node) return;
+
+                if (targetLvl !== currentLevel) setCurrentLevel(targetLvl);
+
+                setCursor({ nodeId: node.id, previousNodeId: node.parent, directionFromPrev: null });
+                setDraftExits([]);
+
+                // Determine appropriate mode based on node state
+                if (node.type === 'unknown') {
+                    setMode('TRANSIT');
+                    setMessage("Exploring... What is here?");
+                } else if (node.type === 'intersection' && node.exits.length === 0) {
+                    setMode('DEFINING');
+                    setMessage("New Intersection. Define paths.");
+                } else if (node.type === 'enemy' && node.exits.length === 0) {
+                    setMode('IDLE');
+                    setMessage("Enemy! Defeat & Press ENTER.");
+                } else {
+                    setMode('IDLE');
+                    setMessage(`Jumped to ${node.type}.`);
+                }
+            };
+
+            // --- Unified Input Handler ---
+            const handleInput = (keyInput, codeInput = null) => {
+                const key = keyInput.toUpperCase();
+                
                 if (key === 'DELETE') {
                     if (window.confirm("⚠️ Reset Map?\n\nThis will delete all progress on ALL levels.")) {
                         const freshData = getInitialData();
@@ -115,23 +157,26 @@
                         setCursor({ nodeId: 'root', previousNodeId: null, directionFromPrev: null });
                         setMode('DEFINING'); 
                         setDraftExits([]);
-                        setMessage("Map Reset. Level 1 Started. Define entry paths.");
-                        localStorage.removeItem('stern_dnd_map_v3');
+                        setMessage("Map Reset");
+                        localStorage.removeItem('stern_dnd_map_v4');
                     }
                     return;
                 }
                 
-                // Level Selection
                 if (['1', '2', '3', '4', '5'].includes(key)) {
                     startLevel(parseInt(key));
                     return;
                 }
 
                 if (mode === 'DEFINING') handleDefiningInput(key);
-                else if (mode === 'IDLE') handleIdleInput(key, e.code);
-                else if (mode === 'TRANSIT') handleTransitInput(key, e.code);
-                };
+                else if (mode === 'IDLE') handleIdleInput(key, codeInput);
+                else if (mode === 'TRANSIT') handleTransitInput(key, codeInput);
+            };
 
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    handleInput(e.key, e.code);
+                };
                 window.addEventListener('keydown', handleKeyDown);
                 return () => window.removeEventListener('keydown', handleKeyDown);
             }, [mode, currentLevel, cursor, draftExits, maps]);
@@ -145,7 +190,7 @@
                     setDraftExits(prev => prev.includes(dir) ? prev.filter(d => d !== dir) : [...prev, dir]);
                 } else if (key === 'ENTER') {
                     if (draftExits.length === 0) {
-                        setMessage("Select at least one path (A/S/D).");
+                        setMessage("Select at least 1 path");
                         return;
                     }
                     const newMaps = [...maps];
@@ -153,7 +198,7 @@
                     node.exits = draftExits.map(d => ({ dir: d, targetId: null }));
                     setMaps(newMaps);
                     setMode('IDLE');
-                    setMessage("Mapped. Choose a direction.");
+                    setMessage("Mapped. Choose direction.");
                 }
             };
 
@@ -164,16 +209,24 @@
                     const isCleared = node.exits.length > 0;
                     if (!isCleared) {
                         if (key === 'ENTER' || code === 'Space') {
-                                // Auto-define Center exit AND move into it immediately
                                 const newMaps = [...maps];
-                                const activeNode = newMaps[currentLevel - 1].nodes[cursor.nodeId];
-                                activeNode.exits = [{ dir: 'center', targetId: null }];
-                                setMaps(newMaps);
+                                const activeMap = newMaps[currentLevel - 1];
+                                const battleNodeId = cursor.nodeId;
                                 
-                                // Move cursor to TRANSIT state immediately
-                                setCursor({ nodeId: null, previousNodeId: cursor.nodeId, directionFromPrev: 'center' });
+                                const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                                activeMap.nodes[newId] = {
+                                    id: newId,
+                                    type: 'unknown', 
+                                    exits: [],
+                                    parent: battleNodeId
+                                };
+                                
+                                activeMap.nodes[battleNodeId].exits = [{ dir: 'center', targetId: newId }];
+                                
+                                setMaps(newMaps);
+                                setCursor({ nodeId: newId, previousNodeId: battleNodeId, directionFromPrev: 'center' });
                                 setMode('TRANSIT');
-                                setMessage("Enemy Defeated. Moving Forward... Found? (X/B/G/E/Space)");
+                                setMessage("Victory! What's next?");
                                 return;
                         } else {
                             setMessage("Enemy! Defeat & Press ENTER.");
@@ -188,7 +241,7 @@
 
                 const exit = node.exits.find(e => e.dir === dir);
                 if (!exit) {
-                    setMessage(`Cannot go ${dir} here.`);
+                    setMessage(`Invalid Move`);
                     return;
                 }
 
@@ -198,21 +251,24 @@
                 } else {
                     setCursor({ nodeId: null, previousNodeId: cursor.nodeId, directionFromPrev: dir });
                     setMode('TRANSIT');
-                    setMessage(`Moving ${dir}... Found? (X/B/G/E/Space)`);
+                    setMessage(`Exploring... What did you find?`);
                 }
             };
 
             const moveToNode = (targetId, dirFromPrev, targetNode) => {
                 setCursor({ nodeId: targetId, previousNodeId: cursor.nodeId, directionFromPrev: dirFromPrev });
                 
-                if (targetNode.type === 'intersection' && targetNode.exits.length === 0) {
+                if (targetNode.type === 'unknown') {
+                    setMode('TRANSIT');
+                    setMessage("Exploring... What did you find?");
+                } else if (targetNode.type === 'intersection' && targetNode.exits.length === 0) {
                     setMode('DEFINING');
                     setDraftExits([]);
-                    setMessage("New Intersection. Define paths.");
+                    setMessage("New Room. Define Paths.");
                 } else if (targetNode.type === 'enemy') {
                     const isCleared = targetNode.exits.length > 0;
                     setMode('IDLE'); 
-                    setMessage(isCleared ? "At Defeated Enemy." : "Battle! Press ENTER when won.");
+                    setMessage(isCleared ? "Defeated Enemy." : "Battle! Press ENTER when won.");
                 } else {
                     setMode('IDLE');
                     setMessage(`At ${targetNode.type}.`);
@@ -237,9 +293,30 @@
 
                 if (!newNodeType) return;
 
-                const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 const newMaps = [...maps];
                 const activeMap = newMaps[currentLevel - 1];
+
+                // --- UPDATE EXISTING UNKNOWN NODE (From Battle/Jump) ---
+                if (cursor.nodeId && activeMap.nodes[cursor.nodeId]?.type === 'unknown') {
+                     const node = activeMap.nodes[cursor.nodeId];
+                     node.type = newNodeType;
+                     node.content = content;
+                     
+                     setMaps(newMaps);
+                     setMode(nextMode);
+                     
+                     if (newNodeType === 'enemy') setMessage("Enemy! Win -> ENTER");
+                     else if (nextMode === 'DEFINING') {
+                         setDraftExits([]);
+                         setMessage("Intersection. Define paths.");
+                     } else {
+                         setMessage(`Found ${newNodeType}.`);
+                     }
+                     return;
+                }
+
+                // --- CREATE NEW NODE (Standard Exploration) ---
+                const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 
                 activeMap.nodes[newId] = {
                     id: newId,
@@ -259,10 +336,10 @@
                 setCursor({ nodeId: newId, previousNodeId: cursor.previousNodeId, directionFromPrev: connectionDir });
                 setMode(nextMode);
                 
-                if (newNodeType === 'enemy') setMessage("Enemy! Defeat & Press ENTER.");
+                if (newNodeType === 'enemy') setMessage("Enemy! Win -> ENTER");
                 else if (nextMode === 'DEFINING') {
                     setDraftExits([]);
-                    setMessage("New Intersection. Define paths.");
+                    setMessage("Intersection. Define paths.");
                 } else {
                     setMessage(`Found ${newNodeType}.`);
                 }
@@ -385,16 +462,47 @@
                 }
             };
 
+            // --- Mobile Control Pad ---
+            const ControlPad = () => (
+                <div className="h-[220px] bg-gray-900 border-t border-gray-800 p-2 grid grid-cols-3 gap-2 shrink-0 md:hidden">
+                    <div className="col-span-3 flex justify-between gap-1 bg-gray-800 p-1 rounded">
+                        <button onClick={() => handleInput('B')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-orange-900/50 text-orange-200' : 'opacity-30'}`}><Skull size={20}/></button>
+                        <button onClick={() => handleInput('X')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-red-900/50 text-red-200' : 'opacity-30'}`}><AlertTriangle size={20}/></button>
+                        <button onClick={() => handleInput('G')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-yellow-900/50 text-yellow-200' : 'opacity-30'}`}><Coins size={20}/></button>
+                        <button onClick={() => handleInput('E')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-gray-700 text-gray-200' : 'opacity-30'}`}><Circle size={16} className="fill-gray-400"/></button>
+                        <button onClick={() => handleInput('', 'Space')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-purple-900/50 text-purple-200' : 'opacity-30'}`}><ArrowUp size={20}/></button>
+                    </div>
+
+                    <button onClick={() => handleInput('A')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16">
+                        <ArrowLeft size={32} className={draftExits.includes('left') ? 'text-green-500' : 'text-white'} />
+                    </button>
+                    
+                    <button onClick={() => handleInput('S')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16">
+                        <ArrowUp size={32} className={draftExits.includes('center') ? 'text-green-500' : 'text-white'} />
+                    </button>
+                    
+                    <button onClick={() => handleInput('D')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16">
+                        <ArrowRight size={32} className={draftExits.includes('right') ? 'text-green-500' : 'text-white'} />
+                    </button>
+
+                    <button onClick={() => handleInput('DELETE')} className="bg-red-900/30 active:bg-red-900/50 rounded flex items-center justify-center text-red-400 font-bold text-xs">
+                        RESET
+                    </button>
+                    
+                    <button onClick={() => handleInput('ENTER')} className={`col-span-2 rounded flex items-center justify-center font-bold text-lg gap-2 ${mode === 'DEFINING' || (mode==='IDLE' && cursor.nodeId && getNode(cursor.nodeId)?.type === 'enemy') ? 'bg-green-600 text-white animate-pulse' : 'bg-gray-700 text-gray-400'}`}>
+                        CONFIRM <Check size={20}/>
+                    </button>
+                </div>
+            );
+
             return (
                 <div className="flex flex-col h-screen bg-gray-950 text-gray-200 font-mono overflow-hidden">
                 
                 {/* Header */}
-                <div className="px-4 py-3 bg-gray-900 border-b border-gray-800 flex justify-between items-center z-10 shadow-lg">
-                    <h1 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Sword size={20} /> Dungeon Crawl Mapper
-                    </h1>
-                    <div className="text-sm font-bold text-blue-300">
-                        {message}
+                <div className="px-4 py-3 bg-gray-900 border-b border-gray-800 flex justify-between items-center z-10 shadow-lg shrink-0">
+                    <div className="flex items-center gap-2">
+                        <Sword size={20} className="md:block hidden"/> 
+                        <span className="font-bold text-sm md:text-lg truncate w-32 md:w-auto">{message}</span>
                     </div>
                     <div className="flex gap-1">
                         {[1, 2, 3, 4, 5].map(lvl => (
@@ -407,31 +515,33 @@
                 </div>
 
                 {/* Main Split View */}
-                <div className="flex flex-1 overflow-hidden">
+                <div className="flex flex-1 overflow-hidden relative">
                     {maps.map((mapData, index) => {
                     const isLevelActive = currentLevel === (index + 1);
                     const { renderNodes, renderEdges } = computeLayout(index);
 
-                    // Recursive check for unknown nodes
                     const hasUnexplored = (nodeId) => {
                         const n = mapData.nodes[nodeId];
                         if (!n) return false;
-                        if (n.type === 'enemy' && n.exits.length === 0) return true; // Unbeaten enemy
-                        return n.exits.some(e => !e.targetId || hasUnexplored(e.targetId)); // Null target OR recursive check
+                        if (n.type === 'enemy' && n.exits.length === 0) return true; 
+                        if (n.type === 'unknown') return true; 
+                        return n.exits.some(e => !e.targetId || hasUnexplored(e.targetId)); 
                     };
 
                     return (
                         <div 
                             key={index} 
-                            className={`flex-1 relative border-r border-gray-800 transition-colors duration-500 
-                            ${isLevelActive ? 'bg-gray-900/50' : 'bg-black/60 opacity-60 grayscale-[50%]'}`}
+                            className={`
+                                relative border-r border-gray-800 transition-colors duration-500 overflow-auto no-scrollbar
+                                ${isLevelActive ? 'flex-1 flex bg-gray-900/50' : 'hidden md:flex md:flex-1 bg-black/60 opacity-60 grayscale-[50%]'}
+                            `}
                         >
                         <div className="absolute bottom-4 right-4 text-8xl font-black text-gray-800/50 pointer-events-none select-none">
                             {index + 1}
                         </div>
 
-                        <div className="w-full h-full relative overflow-hidden">
-                            <div className="absolute bottom-[50px] left-1/2 transform -translate-x-1/2 w-0 h-0">
+                        <div className="w-full min-h-full relative">
+                            <div className="absolute bottom-[100px] left-1/2 transform -translate-x-1/2 w-0 h-0">
                                 
                                 <svg className="absolute overflow-visible" style={{ left: 0, top: 0 }}>
                                     {renderEdges.map((edge, i) => (
@@ -450,24 +560,17 @@
 
                                 {renderNodes.map(node => {
                                     const isCursor = isLevelActive && cursor.nodeId === node.id;
-                                    // If we are in TRANSIT mode (cursor.nodeId is null), highlight the stub we are moving towards
                                     const isActiveStub = isLevelActive && mode === 'TRANSIT' && node.type === 'unknown' && 
                                                          node.parentId === cursor.previousNodeId && node.dir === cursor.directionFromPrev;
                                     
                                     const isUnknown = node.type === 'unknown';
                                     const activeClass = isCursor || isActiveStub ? 'ring-2 ring-green-400 bg-gray-800 scale-110 z-20' : '';
                                     
-                                    // --- Determine Arrows Logic ---
                                     const getExitStatus = (dir) => {
                                         const exit = node.exits?.find(e => e.dir === dir);
-                                        if (!exit) return null; // No path
-                                        
-                                        // Immediate check: Is it a stub?
+                                        if (!exit) return null;
                                         if (!exit.targetId) return 'unexplored';
-                                        
-                                        // Recursive check: Does the branch contain unknowns?
                                         if (hasUnexplored(exit.targetId)) return 'unexplored';
-                                        
                                         return 'explored';
                                     };
 
@@ -476,14 +579,18 @@
                                     const centerStatus = isCursor && mode === 'IDLE' && getExitStatus('center');
 
                                     const getArrowClass = (status) => {
-                                        if (status === 'unexplored') return "text-orange-400 animate-pulse filter drop-shadow-lg";
+                                        if (status === 'unexplored') return "text-orange-500 animate-pulse filter drop-shadow-lg";
                                         return "text-green-600";
                                     };
+                                    
+                                    const getArrowSize = (status) => 20;
+                                    const getArrowStroke = (status) => status === 'unexplored' ? 3 : 2;
 
                                     return (
                                         <div 
                                             key={node.id}
-                                            className={`absolute border-2 flex flex-col items-center justify-center rounded shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300
+                                            onClick={() => handleNodeClick(node, index)}
+                                            className={`absolute border-2 flex flex-col items-center justify-center rounded shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300 cursor-pointer active:scale-95
                                                 ${isUnknown ? 'w-[40px] h-[40px] border-dashed border-gray-700 bg-black/40 z-0' : 'w-[50px] h-[50px] z-10'}
                                                 ${activeClass}
                                                 ${!isCursor && !isActiveStub && !isUnknown ? 'bg-gray-900 border-gray-700' : ''}
@@ -503,7 +610,6 @@
                                                 </>
                                             )}
 
-                                            {/* Defining Arrows (Pulsing) */}
                                             {isCursor && mode === 'DEFINING' && (
                                                 <div className="absolute inset-0 pointer-events-none">
                                                     {draftExits.includes('left') && <ArrowLeft className="absolute top-1/2 -left-5 text-green-500 animate-pulse" size={16}/>}
@@ -512,12 +618,11 @@
                                                 </div>
                                             )}
 
-                                            {/* IDLE Choices with Highlight Logic */}
                                             {isCursor && mode === 'IDLE' && (
                                                 <div className="absolute inset-0 pointer-events-none">
-                                                    {leftStatus && <ArrowLeft className={`absolute top-1/2 -left-6 ${getArrowClass(leftStatus)}`} size={20}/>}
-                                                    {rightStatus && <ArrowRight className={`absolute top-1/2 -right-6 ${getArrowClass(rightStatus)}`} size={20}/>}
-                                                    {centerStatus && <ArrowUp className={`absolute -top-6 left-1/2 -translate-x-1/2 ${getArrowClass(centerStatus)}`} size={20}/>}
+                                                    {leftStatus && <ArrowLeft className={`absolute top-1/2 -left-6 ${getArrowClass(leftStatus)}`} size={getArrowSize(leftStatus)} strokeWidth={getArrowStroke(leftStatus)} />}
+                                                    {rightStatus && <ArrowRight className={`absolute top-1/2 -right-6 ${getArrowClass(rightStatus)}`} size={getArrowSize(rightStatus)} strokeWidth={getArrowStroke(rightStatus)} />}
+                                                    {centerStatus && <ArrowUp className={`absolute -top-6 left-1/2 -translate-x-1/2 ${getArrowClass(centerStatus)}`} size={getArrowSize(centerStatus)} strokeWidth={getArrowStroke(centerStatus)} />}
                                                 </div>
                                             )}
                                         </div>
@@ -530,8 +635,8 @@
                     })}
                 </div>
 
-                {/* Footer Legend */}
-                <div className="px-4 py-2 bg-gray-900 border-t border-gray-800 text-[10px] text-gray-400 flex justify-center gap-4 flex-wrap">
+                {/* Desktop Footer Legend */}
+                <div className="hidden md:flex px-4 py-2 bg-gray-900 border-t border-gray-800 text-[10px] text-gray-400 justify-center gap-4 flex-wrap shrink-0">
                     <span className="flex items-center gap-1"><ChevronsUp size={12} className="text-blue-400"/> Intersection (A/S/D)</span>
                     <span className="flex items-center gap-1"><Skull size={12} className="text-orange-500"/> Enemy (B)</span>
                     <span className="flex items-center gap-1"><AlertTriangle size={12} className="text-red-500"/> Trap (X)</span>
@@ -540,6 +645,10 @@
                     <span className="flex items-center gap-1 text-green-400 font-bold border-l border-gray-700 pl-2">ENTER=Confirm</span>
                     <span className="flex items-center gap-1 text-red-400 font-bold">DEL=Reset</span>
                 </div>
+
+                {/* Mobile Control Pad */}
+                <ControlPad />
+
                 </div>
             );
         }
