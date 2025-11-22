@@ -16,7 +16,9 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <style>
-        body { background-color: #030712; color: white; overflow: hidden; touch-action: none; }
+        /* Use dvh for mobile browsers to avoid bottom bar cutoff */
+        body { background-color: #030712; color: white; overflow: hidden; touch-action: none; height: 100vh; height: 100dvh; }
+        #root { height: 100%; display: flex; flex-direction: column; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none;  scrollbar-width: none; }
     </style>
@@ -74,7 +76,7 @@
             const [draftExits, setDraftExits] = useState([]); 
             const [message, setMessage] = useState("Select Level to Start");
 
-            // --- URL Import Logic (Run once on mount) ---
+            // --- URL Import Logic ---
             useEffect(() => {
                 const params = new URLSearchParams(window.location.search);
                 const sharedData = params.get('map_data');
@@ -87,8 +89,6 @@
                                 setMaps(decoded);
                                 localStorage.setItem('stern_dnd_map_v4', JSON.stringify(decoded));
                                 setMessage("Shared Map Loaded!");
-                                
-                                // Reset cursor safely
                                 setCursor({ nodeId: 'root', previousNodeId: null, directionFromPrev: null });
                                 setMode('IDLE');
                             }
@@ -97,7 +97,6 @@
                         console.error("Invalid map data", e);
                         setMessage("Error loading shared map");
                     }
-                    // Clean URL so refresh doesn't reload the shared map or overwrite future progress
                     window.history.replaceState({}, document.title, window.location.pathname);
                 }
             }, []);
@@ -133,15 +132,14 @@
                 }
             };
 
-            // --- Sharing Handler ---
+            // --- Sharing ---
             const handleShare = () => {
                 try {
                     const json = JSON.stringify(maps);
                     const encoded = btoa(json);
                     const url = `${window.location.origin}${window.location.pathname}?map_data=${encoded}`;
                     navigator.clipboard.writeText(url).then(() => {
-                        setMessage("📋 Link Copied to Clipboard!");
-                        // Reset message after 3 seconds
+                        setMessage("📋 Link Copied!");
                         setTimeout(() => setMessage("Ready"), 3000);
                     });
                 } catch (e) {
@@ -149,15 +147,12 @@
                 }
             };
 
-            // --- CLICK NAVIGATION ---
+            // --- Navigation ---
             const handleNodeClick = (clickedNode, levelIndex) => {
                 const targetLvl = levelIndex + 1;
                 
-                // If we clicked a stub (visual question mark), jump to its parent
                 if (clickedNode.id.toString().startsWith('stub_')) {
                     if (targetLvl !== currentLevel) setCurrentLevel(targetLvl);
-                    
-                    // Move to the parent intersection
                     const parentNode = maps[levelIndex].nodes[clickedNode.parentId];
                     setCursor({ nodeId: parentNode.id, previousNodeId: parentNode.parent, directionFromPrev: null });
                     setMode('IDLE');
@@ -165,7 +160,6 @@
                     return;
                 }
 
-                // Concrete Node Click
                 const node = maps[levelIndex].nodes[clickedNode.id];
                 if (!node) return;
 
@@ -174,7 +168,6 @@
                 setCursor({ nodeId: node.id, previousNodeId: node.parent, directionFromPrev: null });
                 setDraftExits([]);
 
-                // Determine appropriate mode based on node state
                 if (node.type === 'unknown') {
                     setMode('TRANSIT');
                     setMessage("Exploring... What is here?");
@@ -183,14 +176,14 @@
                     setMessage("New Intersection. Define paths.");
                 } else if (node.type === 'enemy' && node.exits.length === 0) {
                     setMode('IDLE');
-                    setMessage("Enemy! Defeat & Press ENTER.");
+                    setMessage("Enemy! Defeat & Press GO.");
                 } else {
                     setMode('IDLE');
                     setMessage(`Jumped to ${node.type}.`);
                 }
             };
 
-            // --- Unified Input Handler ---
+            // --- Input Handler ---
             const handleInput = (keyInput, codeInput = null) => {
                 const key = keyInput.toUpperCase();
                 
@@ -226,7 +219,7 @@
                 return () => window.removeEventListener('keydown', handleKeyDown);
             }, [mode, currentLevel, cursor, draftExits, maps]);
 
-            // --- Logic Handlers ---
+            // --- Mode Logic ---
 
             const handleDefiningInput = (key) => {
                 const mapping = { 'A': 'left', 'S': 'center', 'D': 'right' };
@@ -250,6 +243,7 @@
             const handleIdleInput = (key, code) => {
                 const node = getNode(cursor.nodeId);
                 
+                // Battle Victory Logic
                 if (node.type === 'enemy') {
                     const isCleared = node.exits.length > 0;
                     if (!isCleared) {
@@ -274,7 +268,7 @@
                                 setMessage("Victory! What's next?");
                                 return;
                         } else {
-                            setMessage("Enemy! Defeat & Press ENTER.");
+                            setMessage("Enemy! Defeat & Press GO.");
                             return;
                         }
                     }
@@ -313,7 +307,7 @@
                 } else if (targetNode.type === 'enemy') {
                     const isCleared = targetNode.exits.length > 0;
                     setMode('IDLE'); 
-                    setMessage(isCleared ? "Defeated Enemy." : "Battle! Press ENTER when won.");
+                    setMessage(isCleared ? "Defeated Enemy." : "Battle! Press GO when won.");
                 } else {
                     setMode('IDLE');
                     setMessage(`At ${targetNode.type}.`);
@@ -341,7 +335,6 @@
                 const newMaps = [...maps];
                 const activeMap = newMaps[currentLevel - 1];
 
-                // --- UPDATE EXISTING UNKNOWN NODE (From Battle/Jump) ---
                 if (cursor.nodeId && activeMap.nodes[cursor.nodeId]?.type === 'unknown') {
                      const node = activeMap.nodes[cursor.nodeId];
                      node.type = newNodeType;
@@ -350,7 +343,7 @@
                      setMaps(newMaps);
                      setMode(nextMode);
                      
-                     if (newNodeType === 'enemy') setMessage("Enemy! Win -> ENTER");
+                     if (newNodeType === 'enemy') setMessage("Enemy! Win -> GO");
                      else if (nextMode === 'DEFINING') {
                          setDraftExits([]);
                          setMessage("Intersection. Define paths.");
@@ -360,7 +353,6 @@
                      return;
                 }
 
-                // --- CREATE NEW NODE (Standard Exploration) ---
                 const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 
                 activeMap.nodes[newId] = {
@@ -381,7 +373,7 @@
                 setCursor({ nodeId: newId, previousNodeId: cursor.previousNodeId, directionFromPrev: connectionDir });
                 setMode(nextMode);
                 
-                if (newNodeType === 'enemy') setMessage("Enemy! Win -> ENTER");
+                if (newNodeType === 'enemy') setMessage("Enemy! Win -> GO");
                 else if (nextMode === 'DEFINING') {
                     setDraftExits([]);
                     setMessage("Intersection. Define paths.");
@@ -508,37 +500,45 @@
             };
 
             // --- Mobile Control Pad ---
-            const ControlPad = () => (
-                <div className="h-[220px] bg-gray-900 border-t border-gray-800 p-2 grid grid-cols-3 gap-2 shrink-0 md:hidden">
-                    <div className="col-span-3 flex justify-between gap-1 bg-gray-800 p-1 rounded">
-                        <button onClick={() => handleInput('B')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-orange-900/50 text-orange-200' : 'opacity-30'}`}><Skull size={20}/></button>
-                        <button onClick={() => handleInput('X')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-red-900/50 text-red-200' : 'opacity-30'}`}><AlertTriangle size={20}/></button>
-                        <button onClick={() => handleInput('G')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-yellow-900/50 text-yellow-200' : 'opacity-30'}`}><Coins size={20}/></button>
-                        <button onClick={() => handleInput('E')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-gray-700 text-gray-200' : 'opacity-30'}`}><Circle size={16} className="fill-gray-400"/></button>
-                        <button onClick={() => handleInput('', 'Space')} className={`flex-1 py-2 rounded flex justify-center items-center ${mode === 'TRANSIT' ? 'bg-purple-900/50 text-purple-200' : 'opacity-30'}`}><ArrowUp size={20}/></button>
+            const ControlPad = () => {
+                const isActionAvailable = mode === 'TRANSIT';
+                const isConfirmNeeded = mode === 'DEFINING' || (mode === 'IDLE' && cursor.nodeId && getNode(cursor.nodeId)?.type === 'enemy' && getNode(cursor.nodeId).exits.length === 0);
+
+                return (
+                    <div className="bg-gray-900 border-t border-gray-800 p-2 grid grid-cols-3 gap-2 shrink-0 md:hidden pb-6">
+                        {/* Outcomes Row */}
+                        <div className="col-span-3 flex justify-between gap-1 bg-gray-800 p-1 rounded mb-1">
+                            <button onClick={() => handleInput('B')} className={`flex-1 py-3 rounded flex justify-center items-center ${isActionAvailable ? 'bg-orange-900/50 text-orange-200' : 'opacity-20'}`}><Skull size={24}/></button>
+                            <button onClick={() => handleInput('X')} className={`flex-1 py-3 rounded flex justify-center items-center ${isActionAvailable ? 'bg-red-900/50 text-red-200' : 'opacity-20'}`}><AlertTriangle size={24}/></button>
+                            <button onClick={() => handleInput('G')} className={`flex-1 py-3 rounded flex justify-center items-center ${isActionAvailable ? 'bg-yellow-900/50 text-yellow-200' : 'opacity-20'}`}><Coins size={24}/></button>
+                            <button onClick={() => handleInput('E')} className={`flex-1 py-3 rounded flex justify-center items-center ${isActionAvailable ? 'bg-gray-700 text-gray-200' : 'opacity-20'}`}><Circle size={18} className="fill-gray-400"/></button>
+                            <button onClick={() => handleInput('', 'Space')} className={`flex-1 py-3 rounded flex justify-center items-center ${isActionAvailable ? 'bg-purple-900/50 text-purple-200' : 'opacity-20'}`}><ArrowUp size={24}/></button>
+                        </div>
+
+                        {/* Directionals */}
+                        <button onClick={() => handleInput('A')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16 touch-manipulation">
+                            <ArrowLeft size={32} className={draftExits.includes('left') ? 'text-green-500' : 'text-white'} />
+                        </button>
+                        
+                        <button onClick={() => handleInput('S')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16 touch-manipulation">
+                            <ArrowUp size={32} className={draftExits.includes('center') ? 'text-green-500' : 'text-white'} />
+                        </button>
+                        
+                        <button onClick={() => handleInput('D')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16 touch-manipulation">
+                            <ArrowRight size={32} className={draftExits.includes('right') ? 'text-green-500' : 'text-white'} />
+                        </button>
+
+                        {/* Action Row */}
+                        <button onClick={() => handleInput('DELETE')} className="bg-red-900/30 active:bg-red-900/50 rounded flex items-center justify-center text-red-400 font-bold text-xs h-14">
+                            RESET
+                        </button>
+                        
+                        <button onClick={() => handleInput('ENTER')} className={`col-span-2 rounded flex items-center justify-center font-black text-xl gap-2 h-14 touch-manipulation transition-all ${isConfirmNeeded ? 'bg-green-600 text-white animate-pulse shadow-[0_0_15px_rgba(22,163,74,0.5)]' : 'bg-gray-700 text-gray-400'}`}>
+                            GO <Check size={24}/>
+                        </button>
                     </div>
-
-                    <button onClick={() => handleInput('A')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16">
-                        <ArrowLeft size={32} className={draftExits.includes('left') ? 'text-green-500' : 'text-white'} />
-                    </button>
-                    
-                    <button onClick={() => handleInput('S')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16">
-                        <ArrowUp size={32} className={draftExits.includes('center') ? 'text-green-500' : 'text-white'} />
-                    </button>
-                    
-                    <button onClick={() => handleInput('D')} className="bg-gray-800 active:bg-gray-700 rounded flex items-center justify-center h-16">
-                        <ArrowRight size={32} className={draftExits.includes('right') ? 'text-green-500' : 'text-white'} />
-                    </button>
-
-                    <button onClick={() => handleInput('DELETE')} className="bg-red-900/30 active:bg-red-900/50 rounded flex items-center justify-center text-red-400 font-bold text-xs">
-                        RESET
-                    </button>
-                    
-                    <button onClick={() => handleInput('ENTER')} className={`col-span-2 rounded flex items-center justify-center font-bold text-lg gap-2 ${mode === 'DEFINING' || (mode==='IDLE' && cursor.nodeId && getNode(cursor.nodeId)?.type === 'enemy') ? 'bg-green-600 text-white animate-pulse' : 'bg-gray-700 text-gray-400'}`}>
-                        CONFIRM <Check size={20}/>
-                    </button>
-                </div>
-            );
+                );
+            };
 
             return (
                 <div className="flex flex-col h-screen bg-gray-950 text-gray-200 font-mono overflow-hidden">
@@ -550,11 +550,9 @@
                         <span className="font-bold text-sm md:text-lg truncate">{message}</span>
                     </div>
                     <div className="flex gap-2 items-center">
-                        {/* Share Button */}
                         <button onClick={handleShare} className="bg-gray-800 text-blue-400 p-1.5 rounded hover:bg-gray-700 active:scale-95 transition-all" title="Share Map">
                             <Share2 size={18}/>
                         </button>
-                        
                         <div className="flex gap-1">
                             {[1, 2, 3, 4, 5].map(lvl => (
                             <button key={lvl} onClick={() => startLevel(lvl)} 
